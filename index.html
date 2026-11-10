@@ -1,0 +1,1579 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>쿠키 상점</title>
+    <!-- Chosen Palette: Warm Neutral Harmonious Palette (Background: #F8F9FA, Unpurchased Card: #fde08d, Purchased Card: #b2f0a0, Accent: #F59E0B / #EF4444) -->
+    <!-- Application Structure Plan:
+        1. Privacy-First Navigation Header:
+           - Store Name display with Class ID explicitly masked/hidden from public view for privacy.
+           - Connection status badge (🟢 연동 완료 / ⚪ 미연동) replacing plain ID text.
+           - Tab navigation: Kiosk (🛒 상점 Kiosk), Dashboard (📊 매출 분석), Ledger (📋 판매 장부), Settings/Login (⚙️ 설정/로그인).
+        2. Google Drive appDataFolder sync with minimal scope, optional AES-GCM API key encryption.
+        3. Zero-Data Exposure Initial Screen:
+           - Initial / unconnected state contains NO preset student names or personal data.
+           - Displays a secure lock banner until authenticated and connected to Google Drive.
+        4. Kiosk & Sorting Engines:
+           - Price sorting ("낮은순 ⬆️", "높은순 ⬇️") for snack menu items.
+           - Dynamic card coloring (#fde08d to #b2f0a0) and Web Audio API purchase sound effects.
+    -->
+    <!-- Visualization & Content Choices:
+        1. Student Cards: Interactive HTML/CSS Grid with Tailwind. Custom hex color matching (#fde08d, #b2f0a0).
+        2. Chart Visualizations: Canvas-based Chart.js Bar & Doughnut charts (NO SVG / NO Mermaid JS).
+        3. Audio Synthesizer: Zero-latency Web Audio API sound generator.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Pretendard', 'sans-serif'],
+                    },
+                    colors: {
+                        warmbg: '#F8F9FA',
+                        brandamber: '#F59E0B',
+                        accentsage: '#10B981',
+                        accentred: '#EF4444'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: #F8F9FA;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px;
+            max-height: 380px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 340px;
+            }
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #CBD5E1;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background-color: #F1F5F9;
+        }
+    </style>
+</head>
+
+<body class="text-slate-800 min-h-screen flex flex-col">
+
+    <!-- Toast Notification Container -->
+    <div id="toast" class="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] bg-slate-900/95 text-white px-6 py-3 rounded-full text-sm font-bold shadow-2xl transition-all duration-300 opacity-0 pointer-events-none flex items-center gap-2 border border-slate-700 max-w-md text-center">
+        <span id="toastMsg">메시지 내용</span>
+    </div>
+
+    <!-- Main Header (Class ID Hidden for Privacy) -->
+    <header class="bg-white border-b border-slate-200/80 sticky top-0 z-30 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-2 sm:gap-3">
+                <span class="text-2xl">🏪</span>
+                <div>
+                    <h1 id="mainAppTitle" class="font-extrabold text-lg sm:text-xl text-slate-800 leading-tight">
+                        쿠키 상점
+                    </h1>
+                </div>
+                
+                <!-- Privacy-Safe Connection Status Badge (No ID Text Exposed) -->
+                <div id="headerStatusBadge" class="hidden sm:flex items-center gap-1.5 bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-0.5 rounded-full text-xs font-bold ml-1">
+                    <span id="statusDot">⚪</span> <span id="statusText">미연동</span>
+                </div>
+
+                <button onclick="switchTab('settings')" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition ml-1" title="설정">
+                    ⚙️
+                </button>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <!-- Header Logout Button -->
+                <button id="headerLogoutBtn" onclick="handleLogout()" class="hidden bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-600 text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-200 transition flex items-center gap-1">
+                    <span>🚪</span> <span class="hidden sm:inline">로그아웃</span>
+                </button>
+
+                <nav class="flex items-center gap-1 sm:gap-2">
+                    <button onclick="switchTab('kiosk')" id="tabBtn-kiosk" class="nav-tab text-xs sm:text-sm font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 bg-amber-500 text-white shadow-sm">
+                        <span>🛒</span> <span class="hidden sm:inline">상점 Kiosk</span>
+                    </button>
+                    <button onclick="switchTab('dashboard')" id="tabBtn-dashboard" class="nav-tab text-xs sm:text-sm font-bold px-3.5 py-2 rounded-xl text-slate-600 hover:bg-slate-100 transition flex items-center gap-1.5">
+                        <span>📊</span> <span class="hidden sm:inline">매출 분석</span>
+                    </button>
+                    <button onclick="switchTab('ledger')" id="tabBtn-ledger" class="nav-tab text-xs sm:text-sm font-bold px-3.5 py-2 rounded-xl text-slate-600 hover:bg-slate-100 transition flex items-center gap-1.5">
+                        <span>📋</span> <span class="hidden sm:inline">판매 장부</span>
+                    </button>
+                    <button onclick="switchTab('settings')" id="tabBtn-settings" class="nav-tab text-xs sm:text-sm font-bold px-3.5 py-2 rounded-xl text-slate-600 hover:bg-slate-100 transition flex items-center gap-1.5">
+                        <span>⚙️</span> <span class="hidden sm:inline">설정/로그인</span>
+                    </button>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-5">
+
+        <!-- Kiosk View Section -->
+        <section id="sec-kiosk" class="tab-content space-y-4">
+            
+            <div class="bg-white rounded-2xl p-3.5 border border-slate-200/80 shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3">
+                <div class="flex items-center gap-2.5 w-full sm:w-auto">
+                    <input type="text" id="searchStudentInput" onkeyup="filterStudentGrid()" placeholder="학생 이름/번호 검색..." class="px-3.5 py-2 border border-slate-200 rounded-xl text-slate-800 text-xs sm:text-sm focus:outline-none focus:border-amber-500 w-full sm:w-60 bg-slate-50/50">
+                    <button onclick="openRoleModal()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1">
+                        <span id="roleBadge">👩‍🏫 선생님</span>
+                        <span class="text-[10px] text-slate-400">교대</span>
+                    </button>
+                </div>
+
+                <div id="bigSpenderPill" class="hidden sm:flex items-center gap-1.5 bg-gradient-to-r from-rose-400 to-red-500 text-white px-4 py-1.5 rounded-full font-extrabold text-xs shadow-sm">
+                    <span>👑 오늘의 큰손: <span id="topSpenderName">-</span></span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-4 gap-5">
+                <!-- Main Grid or Secure Privacy Empty State -->
+                <div class="lg:col-span-3">
+                    <div id="studentGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
+                    </div>
+                </div>
+
+                <!-- Real-time Purchase Sidebar -->
+                <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm flex flex-col h-[560px]">
+                    <div class="flex justify-between items-center pb-3 border-b border-slate-100 mb-2">
+                        <h3 class="font-bold text-xs sm:text-sm text-slate-700 flex items-center gap-1.5">
+                            <span>🧾</span> 실시간 구매 내역
+                        </h3>
+                        <span id="liveStatusTag" class="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">대기</span>
+                    </div>
+                    
+                    <div id="sidebarLogList" class="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar text-xs">
+                        <div class="text-center py-12 text-slate-400 text-xs">아직 거래 내역이 없습니다.</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Dashboard View Section -->
+        <section id="sec-dashboard" class="tab-content hidden space-y-6">
+            
+            <div class="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-4">
+                <h2 class="font-bold text-slate-800 text-base mb-1 flex items-center gap-2">
+                    <span>📊</span> 상점 데이터 & 분석 대시보드
+                </h2>
+                <p class="text-xs text-slate-600 leading-relaxed">
+                    학급 상점의 쿠키 소진 흐름, 인기 상품 순위, 학생별 지출 패턴을 시각적으로 확인할 수 있습니다.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+                    <div class="text-xs font-semibold text-slate-400 mb-1">총 사용된 쿠키</div>
+                    <div class="text-2xl font-black text-amber-600 flex items-center gap-1">
+                        <span>🍪</span> <span id="dashTotalSpent">0</span>개
+                    </div>
+                </div>
+                <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+                    <div class="text-xs font-semibold text-slate-400 mb-1">총 판매 건수</div>
+                    <div class="text-2xl font-black text-slate-700 flex items-center gap-1">
+                        <span>🛍️</span> <span id="dashTotalCount">0</span>건
+                    </div>
+                </div>
+                <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+                    <div class="text-xs font-semibold text-slate-400 mb-1">인기 최고 간식</div>
+                    <div class="text-lg font-bold text-slate-800 truncate" id="dashTopSnack">
+                        -
+                    </div>
+                </div>
+                <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+                    <div class="text-xs font-semibold text-slate-400 mb-1">구매 참여 학생</div>
+                    <div class="text-2xl font-black text-emerald-600 flex items-center gap-1">
+                        <span>🧑‍🎓</span> <span id="dashActiveStudents">0</span>명
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm">
+                    <h3 class="font-bold text-sm text-slate-700 mb-3 flex items-center gap-1.5">
+                        <span>🏆</span> 인기 간식 Top 5 (판매 수량)
+                    </h3>
+                    <div class="chart-container">
+                        <canvas id="chartTopSnacks"></canvas>
+                    </div>
+                </div>
+
+                <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm">
+                    <h3 class="font-bold text-sm text-slate-700 mb-3 flex items-center gap-1.5">
+                        <span>🎯</span> 학생 쿠키 지출 분포
+                    </h3>
+                    <div class="chart-container">
+                        <canvas id="chartSpendDist"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Ledger Section -->
+        <section id="sec-ledger" class="tab-content hidden space-y-4">
+            
+            <div class="bg-slate-800 text-white rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div>
+                    <h2 class="font-bold text-base flex items-center gap-2">
+                        <span>📋</span> 상점 판매 & 장부 관리
+                    </h2>
+                    <p class="text-xs text-slate-300 mt-0.5">
+                        구매 내역이 기록되는 투명한 장부입니다. 실제 쿠키를 차감한 후 아래 [구매 기록 리셋]을 실행하세요.
+                    </p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button onclick="resetStudentPurchases()" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1 shadow-sm">
+                        <span>🔄</span> 쿠키 차감 완료 (구매기록 리셋)
+                    </button>
+                    <button onclick="exportLedgerCsv()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1">
+                        <span>📥</span> CSV 다운로드
+                    </button>
+                    <button onclick="clearLedgerHistory()" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-2 rounded-xl transition flex items-center gap-1">
+                        <span>🗑️</span> 전체 장부 초기화
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-white p-3 rounded-2xl border border-slate-200/80 shadow-sm flex flex-wrap gap-2 items-center text-xs">
+                <input type="text" id="ledgerSearchInput" onkeyup="renderLedgerTable()" placeholder="학생 이름 / 품목 검색..." class="px-3 py-1.5 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 w-48">
+                
+                <select id="ledgerFilterRole" onchange="renderLedgerTable()" class="px-3 py-1.5 border border-slate-200 rounded-xl focus:outline-none">
+                    <option value="ALL">전체 담당자</option>
+                    <option value="teacher">선생님</option>
+                    <option value="student">학생 알바생</option>
+                </select>
+
+                <div class="ml-auto text-slate-500 font-medium">
+                    총 거래: <span id="ledgerCountDisplay" class="font-bold text-amber-600">0</span>건 | 
+                    소진 쿠키: <span id="ledgerSumDisplay" class="font-bold text-rose-600">0</span>개
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+                <div class="overflow-x-auto max-h-[500px] overflow-y-auto custom-scrollbar">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead class="bg-slate-50 text-slate-500 sticky top-0 border-b border-slate-200">
+                            <tr>
+                                <th class="p-3">시간</th>
+                                <th class="p-3">담당자</th>
+                                <th class="p-3">학생</th>
+                                <th class="p-3">구매 품목</th>
+                                <th class="p-3">사용 쿠키</th>
+                                <th class="p-3">구분</th>
+                                <th class="p-3 text-right">관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ledgerTableBody" class="divide-y divide-slate-100">
+                            <tr><td colspan="7" class="p-8 text-center text-slate-400">기록된 장부 내역이 없습니다.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Settings & Google Drive Sync Section -->
+        <section id="sec-settings" class="tab-content hidden space-y-6">
+            
+            <!-- Google Drive appDataFolder (Drive-wide access is never requested) -->
+            <div class="bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-2xl p-5 shadow-md space-y-4">
+                <div class="flex justify-between items-start gap-3">
+                    <div>
+                        <h2 class="font-extrabold text-base flex items-center gap-2">🔐 Google 로그인 · 내 드라이브 동기화</h2>
+                        <p class="text-xs text-amber-100 mt-1 leading-relaxed">구글 계정별 <b>앱 전용 비공개 저장공간</b>에 상점 정보를 저장합니다. 다른 드라이브 문서나 사진을 읽을 권한은 요청하지 않습니다.</p>
+                    </div>
+                    <span id="loginStatusBadge" class="bg-amber-400/40 text-amber-100 text-[11px] font-bold px-3 py-1 rounded-full border border-amber-300/40 whitespace-nowrap">미연동</span>
+                </div>
+                <div class="bg-white/10 rounded-xl p-3 space-y-2 text-xs">
+                    <label for="googleClientIdInput" class="font-bold block">Google OAuth 웹 클라이언트 ID (사이트 운영자가 최초 1회 설정)</label>
+                    <input id="googleClientIdInput" type="text" autocomplete="off" placeholder="123456789-xxxx.apps.googleusercontent.com" class="w-full p-2 rounded-lg text-slate-800 font-mono text-xs">
+                    <p class="text-[11px] text-amber-100">Google Cloud에서 Drive API 활성화 → OAuth 동의 화면 설정 → 웹 애플리케이션 클라이언트 생성 → 이 사이트 주소를 '승인된 JavaScript 원본'에 등록하세요. 클라이언트 ID는 비밀번호가 아닙니다. 같은 사이트를 쓰는 사람은 같은 클라이언트 ID를 사용합니다.</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button onclick="connectGoogleDrive()" class="flex-1 bg-slate-900 hover:bg-slate-800 text-amber-300 px-5 py-2.5 rounded-xl font-black text-xs sm:text-sm transition shadow-md">🔗 Google 로그인 및 Drive 연결</button>
+                    <button id="reloadDriveBtn" onclick="loadDriveData(true)" class="hidden bg-amber-100 hover:bg-white text-amber-900 font-bold p-2.5 rounded-xl text-xs">☁️ 다시 불러오기</button>
+                    <button id="cardLogoutBtn" onclick="handleLogout()" class="hidden bg-rose-700 hover:bg-rose-800 text-white px-4 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm transition shadow-md">🚪 연결 해제</button>
+                </div>
+            </div>
+            <div class="bg-white border border-amber-200 rounded-2xl p-4 text-xs space-y-3 text-slate-700">
+                <h3 class="font-bold text-sm text-slate-800">🛡️ 다했니 API Key 보관 방식</h3>
+                <label class="flex items-center gap-2 font-bold"><input type="checkbox" id="encryptApiCheckbox" checked onchange="updateApiSecurityUI()" class="accent-emerald-600"> API Key 암호화해서 Google Drive에 저장 (권장)</label>
+                <div id="apiPasswordArea" class="space-y-1">
+                    <label for="apiEncryptionPassword" class="block font-semibold">암호화 비밀번호 (8자 이상, 다른 기기에서도 필요)</label>
+                    <input id="apiEncryptionPassword" type="password" autocomplete="new-password" placeholder="직접 정한 암호화 비밀번호" class="w-full p-2 border border-slate-300 rounded-lg" minlength="8">
+                    <p class="text-[11px] text-slate-500">AES-GCM + PBKDF2 방식으로 브라우저에서 암호화합니다. 비밀번호는 Drive에도 브라우저 저장소에도 저장하지 않습니다. <b>비밀번호를 잊으면 암호화된 API Key는 복구할 수 없습니다.</b></p>
+                </div>
+                <div id="unlockApiArea" class="hidden bg-amber-50 rounded-xl p-3 border border-amber-200 space-y-2">
+                    <p class="font-bold text-amber-800">🔒 저장된 API Key가 암호화되어 있습니다. 비밀번호를 입력해 잠금을 해제하세요. 잠금 해제 전에는 저장이 중단됩니다.</p>
+                    <button onclick="unlockDriveApiKey()" class="bg-amber-600 hover:bg-amber-700 text-white rounded-lg px-3 py-2 font-bold">🔓 API Key 잠금 해제</button>
+                </div>
+                <p id="unencryptedWarning" class="hidden text-rose-700 bg-rose-50 rounded-xl p-3 border border-rose-200 font-semibold">⚠️ 암호화를 끄면 다했니 API Key가 드라이브 앱 데이터에 평문으로 저장됩니다. 이 계정의 보안에 특히 유의하세요.</p>
+            </div>
+            <div class="bg-slate-100 border border-slate-200/80 rounded-2xl p-4 text-xs space-y-2 text-slate-600 leading-relaxed">
+                <h3 class="font-bold text-slate-800">☁️ 동기화 및 개인정보 안내</h3>
+                <p>① Google 로그인 후 Drive 접근 권한을 허용합니다. ② 이 계정의 이전 상점 데이터를 불러옵니다. ③ 상점 저장·구매·환불·장부 변경 시 연결된 드라이브에 저장을 시도합니다. 다른 기기에서는 같은 Google 계정으로 로그인한 뒤 불러오세요. <b>실시간 공동편집은 지원하지 않으며 동시 사용하면 마지막 저장 내용으로 덮어쓸 수 있습니다.</b></p>
+                <p><b>개인정보:</b> 학생 이름·번호·쿠키 잔액·판매 장부·학생 코드가 본인 구글 계정의 숨겨진 앱 데이터 폴더에 보관됩니다. API Key는 기본적으로 별도 비밀번호로 암호화하며, 다른 데이터는 암호화하지 않습니다. 앱은 일반 드라이브 파일의 조회·수정 권한을 요청하지 않습니다. 공개 또는 공동 계정보다 교사용 Google 계정을 권장합니다. 계정·기기 공유에 유의하세요.</p>
+                <p>구글 계정마다 데이터는 서로 분리됩니다. 로그인 자체가 다른 계정으로 데이터를 공유하는 것은 아닙니다. 사이트 관리자가 Google OAuth 설정을 완료하고, 이용자가 권한을 승인해야 작동합니다.</p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                <!-- Profile & Account Details Panel -->
+                <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-4">
+                    <h3 class="font-bold text-sm text-slate-800 border-b border-slate-100 pb-2 flex items-center justify-between">
+                        <span class="flex items-center gap-1.5"><span>👤</span> 학급 및 학생 명단 설정</span>
+                        <span id="activeIdTag" class="text-[10px] bg-slate-100 text-slate-600 font-bold px-2.5 py-0.5 rounded-full">미연동</span>
+                    </h3>
+
+                    <div class="space-y-3 text-xs">
+                        <div>
+                            <label class="block font-bold text-slate-700 mb-1">상점 이름</label>
+                            <input type="text" id="storeNameInput" value="쿠키 상점" placeholder="쿠키 상점" class="w-full p-2 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 font-bold">
+                        </div>
+
+                        <div>
+                            <label class="block font-bold text-slate-700 mb-1">🔑 다했니 API Key</label>
+                            <input type="password" id="apiKeyInput" placeholder="API Key 입력" class="w-full p-2 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 font-mono">
+                        </div>
+
+                        <div>
+                            <label class="block font-bold text-slate-700 mb-1">📋 학생 코드 / 명단 붙여넣기 (줄바꿈 구분)</label>
+                            <textarea id="studentCodesInput" rows="4" placeholder="학생 코드를 붙여넣거나, 줄바꿈으로 이름을 입력하세요.&#10;예:&#10;김철수&#10;이영희&#10;박민수" class="w-full p-2 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 text-xs font-mono"></textarea>
+                        </div>
+
+                        <div class="pt-2 flex flex-wrap gap-2">
+                            <button onclick="saveStoreSettingsAndPush()" class="flex-1 bg-slate-800 hover:bg-slate-900 text-white p-2.5 rounded-xl font-bold transition text-xs shadow-sm">
+                                💾 데이터 저장 및 Google Drive 동기화
+                            </button>
+                            <button onclick="syncStudentDataFromDahandin()" class="bg-amber-500 hover:bg-amber-600 text-white px-3 py-2.5 rounded-xl font-bold transition text-xs shadow-sm">
+                                🔄 다했니 API 불러오기
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 pt-4 border-t border-slate-100 space-y-2">
+                        <label class="block font-bold text-slate-700 text-xs">🔄 리셋 및 초기화 관리</label>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <button onclick="resetStudentPurchases()" class="w-full bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 py-2 rounded-xl text-xs font-bold transition text-left px-3">
+                                ⚡ 쿠키 차감 리셋 (장부 유지)
+                            </button>
+                            <button onclick="clearCurrentStudentRoster()" class="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 py-2 rounded-xl text-xs font-bold transition text-left px-3">
+                                🗑️ 학생 명단 지우기
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Menu Configuration & Price Sorting Panel -->
+                <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-2 mb-3 gap-2">
+                        <div>
+                            <h3 class="font-bold text-sm text-slate-800 flex items-center gap-1.5">
+                                <span>🍩</span> 상점 간식 메뉴판 & 순서/가격 정렬
+                            </h3>
+                            <p class="text-[11px] text-slate-400 mt-0.5">기존 체크는 메뉴 노출 여부입니다. 할인할 간식은 아래의 별도 할인 선택란에서 고르세요. ⬆️⬇️ 버튼으로 순서를 조절합니다.</p>
+                        </div>
+                        <button onclick="addNewMenu()" class="self-start sm:self-auto bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-xl text-xs font-bold transition">
+                            + 새 간식 추가
+                        </button>
+                    </div>
+
+                    <!-- Price Sorting Control Toolbar -->
+                    <div class="bg-slate-50 p-2.5 rounded-xl border border-slate-200/70 mb-3 flex items-center justify-between text-xs">
+                        <span class="font-bold text-slate-600 flex items-center gap-1">
+                            <span>📊</span> 가격 정렬:
+                        </span>
+                        <div class="flex gap-1.5">
+                            <button onclick="sortMenuByPrice('asc')" class="bg-white hover:bg-amber-50 text-amber-700 border border-slate-200 hover:border-amber-300 font-bold px-2.5 py-1 rounded-lg transition text-[11px] flex items-center gap-1 shadow-sm">
+                                <span>쿠키 낮은순 ⬆️</span>
+                            </button>
+                            <button onclick="sortMenuByPrice('desc')" class="bg-white hover:bg-amber-50 text-amber-700 border border-slate-200 hover:border-amber-300 font-bold px-2.5 py-1 rounded-lg transition text-[11px] flex items-center gap-1 shadow-sm">
+                                <span>쿠키 높은순 ⬇️</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 선택한 메뉴에만 일괄 할인 적용 (노출 체크와 독립) -->
+                    <div class="bg-rose-50 border border-rose-200 rounded-xl p-3 mb-3 space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-xs font-extrabold text-rose-700">🏷️ 선택 메뉴 일괄 할인</span>
+                            <label class="flex items-center gap-1 bg-white border border-rose-200 rounded-lg px-2 py-1 text-xs font-bold text-rose-700">
+                                <input id="bulkDiscountRate" type="number" min="0" max="100" step="1" value="20" class="w-12 text-right outline-none" aria-label="일괄 할인율"> %
+                            </label>
+                            <button onclick="applyBulkDiscount()" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-2 rounded-lg">할인</button>
+                            <button onclick="clearBulkDiscount()" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold px-3 py-2 rounded-lg">할인 해제</button>
+                            <span id="bulkDiscountSelectionCount" class="text-[11px] text-slate-600 font-bold">0개 선택</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-[11px] text-slate-600">
+                            <button onclick="selectAllDiscountItems(true)" class="underline underline-offset-2">전체 선택</button>
+                            <button onclick="selectAllDiscountItems(false)" class="underline underline-offset-2">선택 해제</button>
+                            <span>※ 아래 '할인 선택'에 체크한 메뉴만 변경됩니다. 원래 가격은 유지됩니다.</span>
+                        </div>
+                    </div>
+
+                    <div id="menuBuffetContainer" class="flex-1 overflow-y-auto max-h-[360px] space-y-2 pr-1 custom-scrollbar">
+                    </div>
+
+                    <div class="pt-4 mt-auto border-t border-slate-100">
+                        <button onclick="saveMenuAndSync()" class="w-full bg-slate-900 hover:bg-slate-800 text-white py-2.5 rounded-xl font-bold transition text-xs shadow-md">
+                            💾 메뉴·할인 및 노출 순서 저장 (Google Drive 연동)
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Purchase Snack Modal -->
+    <div id="snackModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl p-6 w-full max-w-lg shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200">
+            <div class="flex justify-between items-start border-b border-slate-100 pb-3">
+                <div>
+                    <h3 id="modalStudentTitle" class="font-bold text-lg text-slate-800">학생 정보</h3>
+                    <div class="text-xs text-slate-500">보유 쿠키: <span id="modalCookieBalance" class="font-extrabold text-amber-600 text-sm">0</span>개</div>
+                </div>
+                <button onclick="closeModal('snackModal')" class="text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+            </div>
+
+            <!-- Modal Price Sort Filter -->
+            <div class="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-xl border border-slate-100">
+                <span class="text-slate-500 font-medium">노출 간식 정렬:</span>
+                <div class="flex gap-1">
+                    <button onclick="setModalSortMode('default')" id="modalSort-default" class="px-2 py-1 rounded-md text-[11px] font-bold bg-amber-500 text-white">기본순</button>
+                    <button onclick="setModalSortMode('asc')" id="modalSort-asc" class="px-2 py-1 rounded-md text-[11px] font-bold bg-white text-slate-600 border">쿠키낮은순 ⬆️</button>
+                    <button onclick="setModalSortMode('desc')" id="modalSort-desc" class="px-2 py-1 rounded-md text-[11px] font-bold bg-white text-slate-600 border">쿠키높은순 ⬇️</button>
+                </div>
+            </div>
+
+            <div id="modalSnackGrid" class="grid grid-cols-3 gap-2.5 max-h-[340px] overflow-y-auto p-1 custom-scrollbar">
+            </div>
+
+            <div class="pt-2">
+                <button onclick="closeModal('snackModal')" class="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-2xl font-bold transition text-xs">
+                    닫기
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Role Select Modal -->
+    <div id="roleSelectModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl text-center space-y-4">
+            <h3 class="font-bold text-lg text-slate-800">🏪 상점 운영 담당자 선택</h3>
+
+            <div class="grid grid-cols-2 gap-3 pt-2">
+                <button onclick="confirmOpenStore('teacher')" class="border-2 border-amber-200 hover:border-amber-500 bg-amber-50/50 hover:bg-amber-50 p-4 rounded-2xl transition flex flex-col items-center gap-2 group">
+                    <span class="text-3xl group-hover:scale-110 transition">👩‍🏫</span>
+                    <div>
+                        <div class="font-bold text-slate-800 text-sm">선생님</div>
+                    </div>
+                </button>
+
+                <button onclick="promptStudentAlba()" class="border-2 border-emerald-200 hover:border-emerald-500 bg-emerald-50/50 hover:bg-emerald-50 p-4 rounded-2xl transition flex flex-col items-center gap-2 group">
+                    <span class="text-3xl group-hover:scale-110 transition">🧑‍💼</span>
+                    <div>
+                        <div class="font-bold text-slate-800 text-sm">학생 (알바생)</div>
+                    </div>
+                </button>
+            </div>
+
+            <button onclick="closeModal('roleSelectModal')" class="w-full bg-slate-100 hover:bg-slate-200 text-slate-600 py-2 rounded-xl text-xs font-bold transition">
+                취소
+            </button>
+        </div>
+    </div>
+
+    <!-- Application Core Logic & Google Drive appDataFolder Sync -->
+    <script>
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                if (AudioContextClass) {
+                    audioCtx = new AudioContextClass();
+                }
+            }
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        window.addEventListener('pointerdown', initAudio, { passive: true });
+        window.addEventListener('keydown', initAudio, { passive: true });
+
+        function playTone(type) {
+            try {
+                initAudio();
+                if (!audioCtx || audioCtx.state !== 'running') return;
+
+                const now = audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                osc.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+
+                if (type === 'buy') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(1200, now);
+                    osc.frequency.exponentialRampToValueAtTime(2000, now + 0.08);
+                    gainNode.gain.setValueAtTime(0.3, now);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+                    osc.start(now);
+                    osc.stop(now + 0.12);
+                } else if (type === 'error') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(180, now);
+                    gainNode.gain.setValueAtTime(0.3, now);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+                    osc.start(now);
+                    osc.stop(now + 0.2);
+                } else if (type === 'refund') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(800, now);
+                    osc.frequency.exponentialRampToValueAtTime(300, now + 0.12);
+                    gainNode.gain.setValueAtTime(0.3, now);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+                    osc.start(now);
+                    osc.stop(now + 0.12);
+                }
+            } catch (e) {
+            }
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById("toast");
+            document.getElementById("toastMsg").innerText = msg;
+            toast.classList.remove("opacity-0", "pointer-events-none");
+            setTimeout(() => {
+                toast.classList.add("opacity-0", "pointer-events-none");
+            }, 3200);
+        }
+
+        const PRESET_SNACKS = [
+            { name: "마이쭈", price: 1, icon: "🍬", enabled: true },
+            { name: "초코송이", price: 2, icon: "🍄", enabled: true },
+            { name: "포카칩", price: 2, icon: "🥔", enabled: true },
+            { name: "음료수", price: 3, icon: "🧃", enabled: true },
+            { name: "아이스크림", price: 3, icon: "🍦", enabled: true },
+            { name: "DJ신청권", price: 5, icon: "🎵", enabled: true },
+            { name: "자리바꾸기", price: 10, icon: "🪑", enabled: true }
+        ];
+
+        // State variables
+        let googleAccessToken = null;
+        let googleTokenClient = null;
+        let driveFileId = null;
+        let storedEncryptedApi = null;
+        let isApiLocked = false;
+        let driveSyncQueue = Promise.resolve();
+        let storeName = "쿠키 상점";
+        let menuList = JSON.parse(JSON.stringify(PRESET_SNACKS));
+        let students = []; // Initialized as EMPTY array for privacy!
+        let selectedStudentIdx = null;
+        let logCounter = 0;
+        let currentRole = "teacher";
+        let currentWorkerName = "선생님";
+        let ledgerHistory = [];
+        let modalSortMode = 'default';
+        // 일괄 할인 체크는 UI 전용이며 기존 메뉴 데이터나 노출 여부를 바꾸지 않습니다.
+        const selectedDiscountItems = new Set();
+        let isConnectedToGoogle = false;
+
+        let chartTopSnacksInstance = null;
+        let chartSpendDistInstance = null;
+
+        // 운영자가 아래 값을 1회 채우면 학생/교사는 Client ID를 직접 입력할 필요가 없습니다.
+        const GOOGLE_OAUTH_CLIENT_ID = ''; // 예: '123456789-abc.apps.googleusercontent.com'
+        const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+        const DRIVE_FILE_NAME = 'cookie_shop_data_v1.json';
+        const DRIVE_API = 'https://www.googleapis.com/drive/v3/files';
+        const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
+        window.onload = function() {
+            document.getElementById('googleClientIdInput').value = GOOGLE_OAUTH_CLIENT_ID || localStorage.getItem('cookie_google_oauth_client_id') || '';
+            renderUnconnectedPrivacyState();
+            renderMenuBuffet();
+            updateApiSecurityUI();
+        };
+
+        function updateApiSecurityUI() {
+            const encrypted = document.getElementById('encryptApiCheckbox').checked;
+            document.getElementById('apiPasswordArea').classList.toggle('hidden', !encrypted);
+            document.getElementById('unencryptedWarning').classList.toggle('hidden', encrypted);
+        }
+        function renderUnconnectedPrivacyState() {
+            students = [];
+            ledgerHistory = [];
+            menuList = JSON.parse(JSON.stringify(PRESET_SNACKS));
+            isConnectedToGoogle = false;
+            storeName = '쿠키 상점';
+            document.getElementById('mainAppTitle').innerText = storeName;
+            document.getElementById('storeNameInput').value = storeName;
+            updateHeaderAndBadges();
+            renderGrid();
+        }
+        async function connectGoogleDrive() {
+            const clientId = document.getElementById('googleClientIdInput').value.trim();
+            if (!/^\d+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/.test(clientId)) {
+                showToast('⚠️ 먼저 올바른 Google OAuth 웹 클라이언트 ID를 입력하세요.'); return;
+            }
+            if (!window.google || !google.accounts || !google.accounts.oauth2) {
+                showToast('⚠️ Google 로그인 스크립트를 불러오지 못했습니다. 인터넷 연결을 확인하세요.'); return;
+            }
+            localStorage.setItem('cookie_google_oauth_client_id', clientId);
+            googleTokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: clientId, scope: DRIVE_SCOPE,
+                callback: async (response) => {
+                    if (response.error || !response.access_token) {
+                        showToast('Google 연결이 취소되었거나 실패했습니다.'); return;
+                    }
+                    googleAccessToken = response.access_token;
+                    isConnectedToGoogle = true;
+                    updateHeaderAndBadges();
+                    try { await loadDriveData(false); }
+                    catch (e) { console.error(e); isConnectedToGoogle = false; googleAccessToken = null; updateHeaderAndBadges(); showToast('⚠️ Google Drive 불러오기 실패: ' + e.message); }
+                }
+            });
+            googleTokenClient.requestAccessToken({prompt: 'consent'});
+        }
+        async function driveFetch(url, options = {}) {
+            if (!googleAccessToken) throw new Error('Google 연결이 필요합니다. 다시 로그인하세요.');
+            const headers = new Headers(options.headers || {});
+            headers.set('Authorization', 'Bearer ' + googleAccessToken);
+            const res = await fetch(url, {...options, headers});
+            if (!res.ok) {
+                if (res.status === 401) {
+                    googleAccessToken = null; isConnectedToGoogle = false; updateHeaderAndBadges();
+                    throw new Error('Google 로그인 시간이 만료되었습니다. 다시 연결하세요.');
+                }
+                throw new Error('Drive API 오류 (' + res.status + ')');
+            }
+            return res;
+        }
+        function encodeB64(bytes) { return btoa(String.fromCharCode(...bytes)); }
+        function decodeB64(str) { return Uint8Array.from(atob(str), c => c.charCodeAt(0)); }
+        async function getApiCryptoKey(password, salt) {
+            if (!window.crypto || !crypto.subtle) throw new Error('HTTPS에서만 암호화할 수 있습니다.');
+            const passwordKey = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+            return crypto.subtle.deriveKey({name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256'}, passwordKey, {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']);
+        }
+        async function encryptApiKey(apiKey, password) {
+            if (password.length < 8) throw new Error('암호화 비밀번호를 8자 이상 입력하세요.');
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const key = await getApiCryptoKey(password, salt);
+            const cipher = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, new TextEncoder().encode(apiKey));
+            return {algorithm:'AES-256-GCM', kdf:'PBKDF2-SHA256', iterations:250000, salt:encodeB64(salt), iv:encodeB64(iv), ciphertext:encodeB64(new Uint8Array(cipher))};
+        }
+        async function decryptApiKey(envelope, password) {
+            const salt = decodeB64(envelope.salt);
+            const iv = decodeB64(envelope.iv);
+            const key = await getApiCryptoKey(password, salt);
+            const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, decodeB64(envelope.ciphertext));
+            return new TextDecoder().decode(plain);
+        }
+        async function unlockDriveApiKey() {
+            const pass = document.getElementById('apiEncryptionPassword').value;
+            try {
+                const api = await decryptApiKey(storedEncryptedApi, pass);
+                document.getElementById('apiKeyInput').value = api;
+                isApiLocked = false;
+                document.getElementById('unlockApiArea').classList.add('hidden');
+                document.getElementById('encryptApiCheckbox').checked = true;
+                updateApiSecurityUI();
+                showToast('🔓 API Key 잠금 해제 완료. 동기화할 수 있습니다.');
+            } catch(e) { showToast('⚠️ 비밀번호가 틀렸거나 복호화에 실패했습니다.'); }
+        }
+        async function loadDriveData(askBeforeOverwrite = false) {
+            if (!isConnectedToGoogle) { showToast('먼저 Google 로그인하세요.'); return; }
+            if (askBeforeOverwrite && !confirm('현재 화면을 Google Drive의 저장 내용으로 교체할까요? 저장하지 않은 변경은 사라집니다.')) return;
+            const params = new URLSearchParams({spaces:'appDataFolder', q:"name = '" + DRIVE_FILE_NAME + "' and trashed = false", fields:'files(id,name),nextPageToken', pageSize:'100'});
+            // In appDataFolder, only this application's data is visible.
+            const fileList = await (await driveFetch(DRIVE_API + '?' + params.toString())).json();
+            const file = (fileList.files || []).find(f => f.name === DRIVE_FILE_NAME);
+            driveFileId = file ? file.id : null;
+            if (!driveFileId) {
+                isApiLocked = false; storedEncryptedApi = null;
+                document.getElementById('unlockApiArea').classList.add('hidden');
+                showToast('☁️ 드라이브 연결 완료! 저장된 상점이 없으므로 현재 설정을 저장해 시작하세요.');
+                updateHeaderAndBadges(); return;
+            }
+            const data = await (await driveFetch(DRIVE_API + '/' + encodeURIComponent(driveFileId) + '?alt=media')).json();
+            storeName = data.storeName || '쿠키 상점';
+            students = Array.isArray(data.students) ? data.students : [];
+            menuList = Array.isArray(data.menu) ? data.menu : JSON.parse(JSON.stringify(PRESET_SNACKS));
+            ledgerHistory = Array.isArray(data.ledgerHistory) ? data.ledgerHistory : [];
+            selectedDiscountItems.clear();
+            document.getElementById('storeNameInput').value = storeName;
+            document.getElementById('studentCodesInput').value = data.studentsText || '';
+            document.getElementById('mainAppTitle').innerText = storeName;
+            document.getElementById('apiKeyInput').value = '';
+            storedEncryptedApi = data.apiKeyEncrypted || null;
+            isApiLocked = !!storedEncryptedApi;
+            document.getElementById('unlockApiArea').classList.toggle('hidden', !isApiLocked);
+            if (storedEncryptedApi) {
+                document.getElementById('encryptApiCheckbox').checked = true;
+            } else {
+                document.getElementById('apiKeyInput').value = data.apiKey || '';
+                document.getElementById('encryptApiCheckbox').checked = false;
+            }
+            updateApiSecurityUI();
+            updateHeaderAndBadges(); renderGrid(); renderMenuBuffet();
+            renderLedgerTable();
+            showToast(isApiLocked ? '☁️ 상점 데이터를 불러왔습니다. 암호화 비밀번호로 API Key를 잠금 해제하세요.' : '☁️ Google Drive 상점 데이터 불러오기 완료!');
+        }
+        async function saveDriveData() {
+            if (!isConnectedToGoogle || !googleAccessToken) {
+                showToast('⚠️ Google 로그인 후 저장할 수 있습니다.'); return false;
+            }
+            if (isApiLocked) { showToast('🔒 암호화된 API Key를 먼저 잠금 해제하세요. 저장을 중단했습니다.'); return false; }
+            const apiKey = document.getElementById('apiKeyInput').value.trim();
+            const useEncryption = document.getElementById('encryptApiCheckbox').checked;
+            const password = document.getElementById('apiEncryptionPassword').value;
+            if (apiKey && useEncryption && password.length < 8) {
+                showToast('🔐 암호화 비밀번호를 8자 이상 입력해야 저장할 수 있습니다.'); return false;
+            }
+            const payload = {
+                version: 1, storeName,
+                studentsText: document.getElementById('studentCodesInput').value,
+                students, menu: menuList, ledgerHistory,
+                updatedAt: new Date().toISOString()
+            };
+            if (apiKey) {
+                if (useEncryption) { payload.apiKeyEncrypted = await encryptApiKey(apiKey, password); storedEncryptedApi = payload.apiKeyEncrypted; }
+                else { payload.apiKey = apiKey; storedEncryptedApi = null; }
+            }
+            const json = JSON.stringify(payload);
+            if (driveFileId) {
+                await driveFetch(DRIVE_UPLOAD + '/' + encodeURIComponent(driveFileId) + '?uploadType=media', {
+                    method:'PATCH', headers: {'Content-Type':'application/json; charset=UTF-8'}, body:json
+                });
+            } else {
+                const boundary = 'cookieShopBoundary' + Date.now();
+                const metadata = JSON.stringify({name:DRIVE_FILE_NAME, parents:['appDataFolder'], mimeType:'application/json'});
+                const body = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + metadata + '\r\n--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + json + '\r\n--' + boundary + '--';
+                const response = await driveFetch(DRIVE_UPLOAD + '?uploadType=multipart&fields=id', {
+                    method:'POST', headers:{'Content-Type':'multipart/related; boundary=' + boundary}, body
+                });
+                const created = await response.json();
+                driveFileId = created.id;
+            }
+            return true;
+        }
+        // Sequential uploads avoid overlapping writes within one browser tab.
+        function pushDataToGoogleDrive() {
+            const task = driveSyncQueue.catch(() => {}).then(() => saveDriveData());
+            driveSyncQueue = task;
+            return task.catch(err => { console.error('Drive sync error:',err); showToast('⚠️ Drive 저장 실패: ' + err.message); return false; });
+        }
+        function handleLogout() {
+            if (window.google?.accounts?.oauth2 && googleAccessToken) google.accounts.oauth2.revoke(googleAccessToken, () => {});
+            googleAccessToken = null; googleTokenClient = null; driveFileId = null;
+            storedEncryptedApi = null; isApiLocked = false;
+            document.getElementById('apiKeyInput').value = '';
+            document.getElementById('apiEncryptionPassword').value = '';
+            document.getElementById('studentCodesInput').value = '';
+            document.getElementById('unlockApiArea').classList.add('hidden');
+            selectedDiscountItems.clear();
+            document.getElementById('sidebarLogList').innerHTML = '<div class="text-center py-12 text-slate-400 text-xs">아직 거래 내역이 없습니다.</div>';
+            renderUnconnectedPrivacyState(); renderMenuBuffet();
+            showToast('🚪 Google 연결을 해제했습니다. 기기의 학생 정보 표시도 지웠습니다.');
+        }
+
+        function updateHeaderAndBadges() {
+            const statusBadge = document.getElementById('headerStatusBadge');
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            const headerLogoutBtn = document.getElementById('headerLogoutBtn');
+            const loginStatusBadge = document.getElementById('loginStatusBadge');
+            const cardLogoutBtn = document.getElementById('cardLogoutBtn');
+            const reloadDriveBtn = document.getElementById('reloadDriveBtn');
+            const activeIdTag = document.getElementById('activeIdTag');
+            const liveStatusTag = document.getElementById('liveStatusTag');
+
+            if (isConnectedToGoogle) {
+                statusDot.innerText = '🟢';
+                statusText.innerText = '연동 완료';
+                statusBadge.className = 'hidden sm:flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full text-xs font-bold ml-1';
+
+                headerLogoutBtn.classList.remove('hidden');
+
+                loginStatusBadge.innerText = '🟢 Google Drive 연결됨';
+                loginStatusBadge.className = 'bg-emerald-400 text-slate-900 font-extrabold text-[11px] px-3 py-1 rounded-full shadow-sm whitespace-nowrap';
+
+                cardLogoutBtn.classList.remove('hidden');
+                reloadDriveBtn.classList.remove('hidden');
+
+                activeIdTag.innerText = '연동됨';
+                activeIdTag.className = 'text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full';
+
+                liveStatusTag.innerText = '실시간 연동';
+                liveStatusTag.className = 'text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold';
+            } else {
+                statusDot.innerText = '⚪';
+                statusText.innerText = '미연동';
+                statusBadge.className = 'hidden sm:flex items-center gap-1.5 bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-0.5 rounded-full text-xs font-bold ml-1';
+
+                headerLogoutBtn.classList.add('hidden');
+
+                loginStatusBadge.innerText = '미연동 (초기 화면)';
+                loginStatusBadge.className = 'bg-amber-400/40 text-amber-100 text-[11px] font-bold px-3 py-1 rounded-full border border-amber-300/40 whitespace-nowrap';
+
+                cardLogoutBtn.classList.add('hidden');
+                reloadDriveBtn.classList.add('hidden');
+
+                activeIdTag.innerText = '미연동';
+                activeIdTag.className = 'text-[10px] bg-slate-100 text-slate-600 font-bold px-2.5 py-0.5 rounded-full';
+
+                liveStatusTag.innerText = '대기';
+                liveStatusTag.className = 'text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold';
+            }
+        }
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(sec => sec.classList.add('hidden'));
+            document.getElementById(`sec-${tabId}`).classList.remove('hidden');
+
+            document.querySelectorAll('.nav-tab').forEach(btn => {
+                btn.classList.remove('bg-amber-500', 'text-white', 'shadow-sm');
+                btn.classList.add('text-slate-600');
+            });
+
+            const activeBtn = document.getElementById(`tabBtn-${tabId}`);
+            if (activeBtn) {
+                activeBtn.classList.remove('text-slate-600');
+                activeBtn.classList.add('bg-amber-500', 'text-white', 'shadow-sm');
+            }
+
+            if (tabId === 'dashboard') {
+                updateDashboardCharts();
+            } else if (tabId === 'ledger') {
+                renderLedgerTable();
+            }
+        }
+
+        async function saveStoreSettingsAndPush() {
+            const val = document.getElementById('storeNameInput').value.trim() || "쿠키 상점";
+            storeName = val;
+            document.getElementById('mainAppTitle').innerText = val;
+
+            const rawText = document.getElementById('studentCodesInput').value;
+
+            if (rawText && !rawText.match(/[A-Za-z0-9]{9}/)) {
+                const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                if (lines.length > 0) {
+                    students = lines.map((name, i) => ({
+                        id: i + 1,
+                        name: name.replace(/^\d+[\.\s]*/, ''),
+                        current: 10,
+                        total: 10,
+                        spent: 0
+                    }));
+                }
+            }
+
+            renderGrid();
+            const saved = await pushDataToGoogleDrive();
+            if (saved) showToast('설정이 Google Drive에 저장되었습니다.');
+        }
+
+        async function syncStudentDataFromDahandin() {
+            const key = document.getElementById('apiKeyInput').value.trim();
+            const rawText = document.getElementById('studentCodesInput').value;
+
+            if (!key || !rawText) {
+                showToast("API Key와 학생 코드를 입력해주세요!");
+                return;
+            }
+
+            const codePattern = /[A-Za-z0-9]{9}/g;
+            const foundCodes = rawText.match(codePattern);
+
+            if (!foundCodes || foundCodes.length === 0) {
+                showToast("9자리 학생 코드를 찾지 못했습니다.");
+                return;
+            }
+
+            const uniqueCodes = [...new Set(foundCodes)];
+            showToast(`⏳ 다했니 API 학생 데이터 조회 중... (${uniqueCodes.length}명)`);
+
+            const results = [];
+            for (let code of uniqueCodes) {
+                try {
+                    const res = await fetch(`https://api.dahandin.com/openapi/v1/get/student/total?code=${code}`, {
+                        headers: { "X-API-Key": key }
+                    });
+                    const json = await res.json();
+                    if (json.result && json.data) {
+                        results.push({
+                            id: json.data.number || "?",
+                            name: json.data.name,
+                            current: json.data.totalCookie || 0,
+                            total: json.data.cookie || 0,
+                            spent: 0
+                        });
+                    }
+                } catch (e) {
+                }
+            }
+
+            if (results.length > 0) {
+                students = results.sort((a, b) => Number(a.id) - Number(b.id));
+                renderGrid();
+                await pushDataToGoogleDrive();
+                showToast(`🎉 ${students.length}명의 학생 데이터를 성공적으로 연동했습니다!`);
+            } else {
+                showToast("조회 실패! API 키 및 학생 코드를 확인하세요.");
+            }
+        }
+
+        async function clearCurrentStudentRoster() {
+            if (confirm("학생 명단을 지우시겠습니까?")) {
+                students = [];
+                renderGrid();
+                await pushDataToGoogleDrive();
+                showToast("학생 명단이 지워졌습니다.");
+            }
+        }
+
+        async function resetStudentPurchases() {
+            if (confirm("실제 쿠키 차감을 수동으로 반영했습니까?\n\n[확인]을 누르면 카드 상의 구매 차감 내역(spent)이 0으로 리셋됩니다.\n※ 기존 판매 장부 기록은 지워지지 않고 유지됩니다.")) {
+                students.forEach(s => {
+                    s.spent = 0;
+                    s.current = s.total;
+                });
+                renderGrid();
+                await pushDataToGoogleDrive();
+                if (!document.getElementById('sec-dashboard').classList.contains('hidden')) {
+                    updateDashboardCharts();
+                }
+                showToast("학생 카드의 구매 차감 기록이 리셋되었습니다.");
+            }
+        }
+
+        function renderGrid() {
+            const container = document.getElementById('studentGrid');
+            container.innerHTML = '';
+
+            // Privacy mode notice if not connected or student list empty
+            if (!isConnectedToGoogle || students.length === 0) {
+                container.className = "col-span-full";
+                container.innerHTML = `
+                    <div class="bg-white border-2 border-dashed border-slate-200 rounded-3xl p-8 sm:p-12 text-center space-y-4 max-w-xl mx-auto my-4 shadow-sm">
+                        <div class="text-4xl">🔒</div>
+                        <h3 class="font-bold text-slate-800 text-base sm:text-lg">연결된 학생 명단이 없습니다.</h3>
+                        <p class="text-xs sm:text-sm text-slate-500 leading-relaxed">
+                            개인정보 보호를 위해 기본 명단이 노출되지 않습니다.<br>
+                            <span class="font-bold text-amber-600">[설정/로그인]</span> 탭에서 <b>Google 로그인</b> 후 <b>Drive 연결</b>을 진행해주세요.
+                        </p>
+                        <button onclick="switchTab('settings')" class="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs sm:text-sm px-5 py-2.5 rounded-xl transition shadow-md">
+                            <span>⚙️</span> 설정/로그인 화면으로 이동
+                        </button>
+                    </div>
+                `;
+                document.getElementById('bigSpenderPill').classList.add('hidden');
+                return;
+            }
+
+            container.className = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5";
+
+            let maxIndex = -1, maxSpent = 0;
+            students.forEach((s, i) => {
+                if (s.spent > maxSpent) { maxSpent = s.spent; maxIndex = i; }
+            });
+
+            const pill = document.getElementById('bigSpenderPill');
+            const topSpenderName = document.getElementById('topSpenderName');
+            if (maxSpent > 0 && maxIndex !== -1) {
+                topSpenderName.innerText = `${students[maxIndex].name} (-${maxSpent})`;
+                pill.classList.remove('hidden');
+            } else {
+                pill.classList.add('hidden');
+            }
+
+            students.forEach((s, index) => {
+                const isVip = (s.spent > 0 && index === maxIndex);
+                const hasBought = s.spent > 0;
+
+                const card = document.createElement('div');
+                const bgStyle = hasBought ? 'bg-[#b2f0a0]' : 'bg-[#fde08d]';
+                const borderStyle = isVip ? 'border-2 border-amber-400 ring-2 ring-amber-300' : (hasBought ? 'border-2 border-emerald-400' : 'border border-amber-300/60');
+
+                card.className = `student-card ${bgStyle} ${borderStyle} rounded-2xl p-2.5 sm:p-3 shadow-sm hover:shadow-md transition cursor-pointer relative flex flex-col h-36 sm:h-40 select-none`;
+                card.setAttribute('data-name', s.name);
+                card.setAttribute('data-id', s.id);
+                card.onclick = () => openSnackModal(index);
+
+                card.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <span class="text-2xl sm:text-3xl font-black text-amber-700/20 leading-none">${s.id}</span>
+                        <div class="font-extrabold text-slate-800 text-sm sm:text-base flex items-center gap-1">
+                            <span>${s.name}</span>
+                            ${isVip ? '<span class="text-sm">👑</span>' : ''}
+                        </div>
+                    </div>
+
+                    <div class="flex-1 min-h-0 flex flex-col items-center justify-center leading-none">
+                        <div class="flex items-center justify-center gap-1 w-full">
+                            <span class="text-xl sm:text-2xl" aria-hidden="true">🍪</span>
+                            <span class="font-black tracking-tight tabular-nums whitespace-nowrap" style="color:#4A2C1A; font-size:clamp(30px, 3.4vw, 50px); line-height:1.05;">${s.current}</span>
+                        </div>
+                        ${hasBought ? `<span class="text-[10px] sm:text-xs font-extrabold text-rose-600">사용 -${s.spent}</span>` : ''}
+                    </div>
+                    <div class="text-right text-[10px] sm:text-[11px] font-semibold text-slate-600/80 leading-none">
+                        총 받은 쿠키 ${s.total}
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function filterStudentGrid() {
+            const query = document.getElementById('searchStudentInput').value.toLowerCase();
+            const cards = document.querySelectorAll('.student-card');
+            cards.forEach(card => {
+                const name = card.getAttribute('data-name').toLowerCase();
+                const id = card.getAttribute('data-id');
+                if (name.includes(query) || id.includes(query)) {
+                    card.classList.remove('hidden');
+                } else {
+                    card.classList.add('hidden');
+                }
+            });
+        }
+
+        function setModalSortMode(mode) {
+            modalSortMode = mode;
+            ['default', 'asc', 'desc'].forEach(m => {
+                const btn = document.getElementById(`modalSort-${m}`);
+                if (btn) {
+                    if (m === mode) {
+                        btn.className = "px-2 py-1 rounded-md text-[11px] font-bold bg-amber-500 text-white shadow-sm";
+                    } else {
+                        btn.className = "px-2 py-1 rounded-md text-[11px] font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-100";
+                    }
+                }
+            });
+            if (selectedStudentIdx !== null && students[selectedStudentIdx]) {
+                renderModalSnacks(students[selectedStudentIdx]);
+            }
+        }
+
+        function openSnackModal(studentIdx) {
+            selectedStudentIdx = studentIdx;
+            const s = students[studentIdx];
+            if (!s) return;
+
+            document.getElementById('modalStudentTitle').innerText = `${s.id}. ${s.name}`;
+            document.getElementById('modalCookieBalance').innerText = s.current;
+
+            renderModalSnacks(s);
+            document.getElementById('snackModal').classList.remove('hidden');
+        }
+
+        // 할인율 0~100%, 할인 적용 쿠키는 정수로 반올림합니다.
+        // 1~99% 할인의 경우 최소 1쿠키, 100% 할인은 무료입니다.
+        function getMenuDiscountRate(item) {
+            const value = Number(item.discountRate ?? 0);
+            return Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : 0;
+        }
+
+        function getDiscountedPrice(item) {
+            const originalPrice = Math.max(0, Number(item.price) || 0);
+            const discountRate = getMenuDiscountRate(item);
+            if (discountRate === 100) return 0;
+            return discountRate > 0 ? Math.max(1, Math.round(originalPrice * (100 - discountRate) / 100)) : originalPrice;
+        }
+
+        function renderModalSnacks(s) {
+            let activeMenu = menuList.filter(item => item.enabled !== false);
+
+            if (modalSortMode === 'asc') {
+                activeMenu.sort((a, b) => getDiscountedPrice(a) - getDiscountedPrice(b));
+            } else if (modalSortMode === 'desc') {
+                activeMenu.sort((a, b) => getDiscountedPrice(b) - getDiscountedPrice(a));
+            }
+
+            const grid = document.getElementById('modalSnackGrid');
+            grid.innerHTML = '';
+
+            if (activeMenu.length === 0) {
+                grid.innerHTML = '<div class="col-span-3 text-center py-6 text-slate-400 text-xs">노출으로 설정된 간식이 없습니다. 설정 탭에서 메뉴를 활성화 해주세요.</div>';
+            } else {
+                activeMenu.forEach(item => {
+                    const btn = document.createElement('button');
+                    btn.className = "bg-amber-50/70 hover:bg-amber-100 border border-amber-200 rounded-2xl p-3 flex flex-col items-center justify-center gap-1 transition active:scale-95 shadow-sm";
+                    const discountRate = getMenuDiscountRate(item);
+                    const actualPrice = getDiscountedPrice(item);
+                    btn.onclick = () => buyItem(item.name, actualPrice);
+                    btn.innerHTML = `
+                        <span class="text-2xl">${item.icon}</span>
+                        <span class="font-bold text-xs text-slate-800">${item.name}</span>
+                        ${discountRate > 0 ? `
+                            <span class="text-[10px] font-black bg-rose-500 text-white rounded-full px-2 py-0.5">${discountRate}% 할인</span>
+                            <span class="text-[11px] text-slate-400 line-through">${item.price}🍪</span>
+                            <span class="text-sm font-black text-rose-600">${actualPrice === 0 ? '무료 🎉' : '-' + actualPrice + '🍪'}</span>
+                        ` : `<span class="text-xs font-extrabold text-amber-600">-${item.price}🍪</span>`}
+                    `;
+                    grid.appendChild(btn);
+                });
+            }
+        }
+
+        async function buyItem(itemName, price) {
+            const s = students[selectedStudentIdx];
+            if (s.current < price) {
+                playTone('error');
+                showToast("⚠️ 쿠키가 부족합니다!");
+                return;
+            }
+
+            playTone('buy');
+            s.current -= price;
+            s.spent += price;
+
+            const now = new Date();
+            const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+            const logId = 'log-' + (++logCounter);
+
+            const entry = {
+                id: logId,
+                time: timeStr,
+                timestamp: now.toISOString(),
+                worker: currentWorkerName,
+                role: currentRole,
+                studentId: s.id,
+                studentName: s.name,
+                item: itemName,
+                price: price,
+                type: '구매'
+            };
+
+            addSidebarLog(entry, selectedStudentIdx);
+            recordLedger(entry);
+
+            renderGrid();
+            closeModal('snackModal');
+            showToast(`${s.name} - ${itemName} 구매 완료!`);
+
+            await pushDataToGoogleDrive();
+        }
+
+        function addSidebarLog(entry, studentIdx) {
+            const list = document.getElementById('sidebarLogList');
+            if (list.querySelector('.text-center')) list.innerHTML = '';
+
+            const div = document.createElement('div');
+            div.className = "bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex justify-between items-center transition";
+            div.id = entry.id;
+            div.innerHTML = `
+                <div>
+                    <div class="font-bold text-slate-800">${entry.studentName} <span class="font-normal text-slate-500">(${entry.item})</span></div>
+                    <div class="text-[10px] text-slate-400">[${entry.worker}] ${entry.time}</div>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="font-extrabold text-rose-600">-${entry.price}</span>
+                    <button onclick="refund('${entry.id}', ${studentIdx}, ${entry.price})" class="bg-white border border-slate-200 text-slate-500 hover:text-rose-600 px-1.5 py-0.5 rounded text-[10px] transition">환불</button>
+                </div>
+            `;
+            list.prepend(div);
+        }
+
+        async function refund(logId, studentIdx, price) {
+            playTone('refund');
+            students[studentIdx].current += price;
+            students[studentIdx].spent -= price;
+
+            const elem = document.getElementById(logId);
+            if (elem) elem.remove();
+
+            const now = new Date();
+            const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+            const refundEntry = {
+                id: 'ref-' + (++logCounter),
+                time: timeStr,
+                timestamp: now.toISOString(),
+                worker: currentWorkerName,
+                role: currentRole,
+                studentId: students[studentIdx].id,
+                studentName: students[studentIdx].name,
+                item: "환불 처리",
+                price: -price,
+                type: '환불'
+            };
+
+            recordLedger(refundEntry);
+            renderGrid();
+            showToast("환불 처리가 완료되었습니다.");
+
+            await pushDataToGoogleDrive();
+        }
+
+        function openRoleModal() {
+            document.getElementById('roleSelectModal').classList.remove('hidden');
+        }
+
+        function promptStudentAlba() {
+            const albaName = prompt("🧑‍💼 알바생 이름을 입력하세요:", "알바생 1");
+            if (albaName !== null && albaName.trim() !== "") {
+                currentWorkerName = `알바: ${albaName.trim()}`;
+                confirmOpenStore('student');
+            }
+        }
+
+        function confirmOpenStore(role) {
+            currentRole = role;
+            if (role === 'teacher') {
+                currentWorkerName = "선생님";
+                document.getElementById('roleBadge').innerText = "👩‍🏫 선생님";
+            } else {
+                document.getElementById('roleBadge').innerText = `🧑‍💼 ${currentWorkerName}`;
+            }
+            closeModal('roleSelectModal');
+            showToast(`담당자가 '${currentWorkerName}'(으)로 변경되었습니다.`);
+        }
+
+        function recordLedger(entry) {
+            ledgerHistory.unshift(entry);
+        }
+
+        function renderLedgerTable() {
+            const tbody = document.getElementById('ledgerTableBody');
+            const search = document.getElementById('ledgerSearchInput').value.toLowerCase();
+            const roleFilter = document.getElementById('ledgerFilterRole').value;
+
+            tbody.innerHTML = '';
+            let filteredSum = 0;
+            let filteredCount = 0;
+
+            const filtered = ledgerHistory.filter(row => {
+                const matchSearch = row.studentName.toLowerCase().includes(search) || row.item.toLowerCase().includes(search);
+                const matchRole = (roleFilter === 'ALL') || (row.role === roleFilter);
+                return matchSearch && matchRole;
+            });
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400">장부 내역이 없습니다.</td></tr>';
+            } else {
+                filtered.forEach(row => {
+                    if (row.type === '구매') {
+                        filteredSum += row.price;
+                        filteredCount++;
+                    } else if (row.type === '환불') {
+                        filteredSum += row.price;
+                    }
+
+                    const tr = document.createElement('tr');
+                    tr.className = "hover:bg-slate-50 transition";
+                    tr.innerHTML = `
+                        <td class="p-3 font-mono text-slate-400">${row.time}</td>
+                        <td class="p-3"><span class="bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold">${row.worker}</span></td>
+                        <td class="p-3 font-bold text-slate-800">${row.studentName} (${row.studentId}번)</td>
+                        <td class="p-3 text-slate-700">${row.item}</td>
+                        <td class="p-3 font-extrabold ${row.price > 0 ? 'text-rose-600' : 'text-emerald-600'}">${row.price > 0 ? '-' + row.price : '+' + Math.abs(row.price)}</td>
+                        <td class="p-3 font-bold">${row.type === '환불' ? '<span class="text-amber-600">환불</span>' : '<span class="text-slate-500">정상</span>'}</td>
+                        <td class="p-3 text-right">
+                            <span class="text-[10px] text-slate-300">#${row.id}</span>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+
+            document.getElementById('ledgerCountDisplay').innerText = filteredCount;
+            document.getElementById('ledgerSumDisplay').innerText = filteredSum;
+        }
+
+        function exportLedgerCsv() {
+            if (ledgerHistory.length === 0) {
+                showToast("다운로드할 장부 데이터가 없습니다.");
+                return;
+            }
+            let csv = "\uFEFF시간,담당자,구분,학생번호,학생이름,품목,사용쿠키\n";
+            ledgerHistory.forEach(row => {
+                csv += `"${row.time}","${row.worker}","${row.type}","${row.studentId}","${row.studentName}","${row.item}","${row.price}"\n`;
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `매점장부_${new Date().toISOString().slice(0, 10)}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast("장부 CSV 파일이 생성되었습니다.");
+        }
+
+        async function clearLedgerHistory() {
+            if (confirm(`현재 상점의 전체 장부 기록을 삭제하시겠습니까?`)) {
+                ledgerHistory = [];
+                renderLedgerTable();
+                await pushDataToGoogleDrive();
+                showToast("전체 장부가 초기화되었습니다.");
+            }
+        }
+
+        /* --- Menu Configuration & Price Sorting Logic --- */
+        async function sortMenuByPrice(direction = 'asc') {
+            menuList.sort((a, b) => {
+                const priceA = Number(a.price) || 0;
+                const priceB = Number(b.price) || 0;
+                return direction === 'asc' ? priceA - priceB : priceB - priceA;
+            });
+            renderMenuBuffet();
+            await pushDataToGoogleDrive();
+            showToast(direction === 'asc' ? "🔢 쿠키 가격이 낮은 순서대로 정렬되었습니다." : "🔢 쿠키 가격이 높은 순서대로 정렬되었습니다.");
+        }
+
+        function renderMenuBuffet() {
+            const container = document.getElementById('menuBuffetContainer');
+            container.innerHTML = '';
+
+            menuList.forEach((item, index) => {
+                const isEnabled = item.enabled !== false;
+                const discountSelected = selectedDiscountItems.has(item);
+                const div = document.createElement('div');
+                div.className = `p-2.5 rounded-xl border flex flex-col gap-1.5 transition ${discountSelected ? 'border-rose-400 ring-1 ring-rose-200 bg-rose-50/60' : (isEnabled ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200 bg-slate-50 opacity-60')}`;
+                
+                div.innerHTML = `
+                    <div class="flex items-center gap-2 flex-1 min-w-0">
+                        <label class="flex flex-col items-center gap-0.5 shrink-0 text-[9px] text-slate-500 cursor-pointer" title="상점에 표시할지 선택">
+                            <span>노출</span>
+                            <input type="checkbox" ${isEnabled ? 'checked' : ''} onchange="toggleMenuItemEnabled(${index})" class="w-4 h-4 accent-emerald-600 rounded cursor-pointer" aria-label="메뉴 노출 여부">
+                        </label>
+                        <div class="flex flex-col gap-0.5">
+                            <button onclick="moveMenuItem(${index}, -1)" ${index === 0 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px]"' : 'class="hover:bg-slate-200 rounded px-1 text-[10px]"'} title="위로 이동">⬆️</button>
+                            <button onclick="moveMenuItem(${index}, 1)" ${index === menuList.length - 1 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px]"' : 'class="hover:bg-slate-200 rounded px-1 text-[10px]"'} title="아래로 이동">⬇️</button>
+                        </div>
+                        <input type="text" value="${item.icon}" onchange="updateMenuData(${index}, 'icon', this.value)" class="w-9 text-center bg-white border border-slate-200 rounded py-1 text-base focus:outline-none">
+                        <input type="text" value="${item.name}" onchange="updateMenuData(${index}, 'name', this.value)" class="flex-1 bg-white border border-slate-200 rounded px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none">
+                        <div class="flex items-center gap-1 bg-white border border-slate-200 rounded px-2 py-1">
+                            <span class="text-[10px] text-slate-400 font-bold">🍪:</span>
+                            <input type="number" min="1" max="500" value="${item.price}" onchange="updateMenuData(${index}, 'price', this.value)" class="w-12 font-extrabold text-amber-600 text-xs focus:outline-none text-right">
+                        </div>
+                        <button onclick="deleteMenuItem(${index})" class="text-rose-400 hover:text-rose-600 p-1 text-xs font-bold transition" aria-label="메뉴 삭제">🗑️</button>
+                    </div>
+                    <div class="flex flex-wrap justify-between items-center gap-2 pl-1">
+                        <label class="inline-flex items-center gap-1.5 text-[11px] font-extrabold text-rose-700 cursor-pointer">
+                            <input type="checkbox" ${discountSelected ? 'checked' : ''} onchange="toggleDiscountSelection(${index}, this.checked)" class="w-4 h-4 accent-rose-600" aria-label="할인 선택"> 할인 선택
+                        </label>
+                        <span class="text-[11px] font-bold ${getMenuDiscountRate(item) > 0 ? 'text-rose-700' : 'text-slate-500'}">
+                            ${getMenuDiscountRate(item) > 0 ? `${getMenuDiscountRate(item)}% 할인 · ${item.price}🍪 → ${getDiscountedPrice(item)}🍪` : '할인 없음'}
+                        </span>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+            updateDiscountSelectionCount();
+        }
+
+        function updateDiscountSelectionCount() {
+            const count = [...selectedDiscountItems].filter(item => menuList.includes(item)).length;
+            const label = document.getElementById('bulkDiscountSelectionCount');
+            if (label) label.innerText = `${count}개 선택`;
+        }
+
+        function toggleDiscountSelection(index, checked) {
+            const item = menuList[index];
+            if (!item) return;
+            if (checked) selectedDiscountItems.add(item);
+            else selectedDiscountItems.delete(item);
+            renderMenuBuffet();
+        }
+
+        function selectAllDiscountItems(checked) {
+            selectedDiscountItems.clear();
+            if (checked) menuList.forEach(item => selectedDiscountItems.add(item));
+            renderMenuBuffet();
+        }
+
+        async function applyBulkDiscount() {
+            const items = menuList.filter(item => selectedDiscountItems.has(item));
+            if (!items.length) { showToast('⚠️ 먼저 할인할 간식을 체크해주세요.'); return; }
+            const input = document.getElementById('bulkDiscountRate');
+            const rate = Number(input.value);
+            if (input.value.trim() === '' || !Number.isInteger(rate) || rate < 0 || rate > 100) {
+                showToast('⚠️ 할인율은 0~100 사이의 정수로 입력해주세요.'); return;
+            }
+            items.forEach(item => { item.discountRate = rate; });
+            renderMenuBuffet();
+            await pushDataToGoogleDrive();
+            showToast(`🏷️ ${items.length}개 메뉴에 ${rate}% 할인을 적용했습니다.`);
+        }
+
+        async function clearBulkDiscount() {
+            const items = menuList.filter(item => selectedDiscountItems.has(item));
+            if (!items.length) { showToast('⚠️ 할인 해제할 간식을 체크해주세요.'); return; }
+            items.forEach(item => { item.discountRate = 0; });
+            renderMenuBuffet();
+            await pushDataToGoogleDrive();
+            showToast(`✅ ${items.length}개 메뉴의 할인율을 해제했습니다. 원래 가격으로 돌아왔습니다.`);
+        }
+
+        function toggleMenuItemEnabled(index) {
+            menuList[index].enabled = !menuList[index].enabled;
+            renderMenuBuffet();
+        }
+
+        function updateMenuData(index, key, value) {
+            if (key === 'price') {
+                menuList[index].price = parseInt(value, 10) || 1;
+            } else if (key === 'discountRate') {
+                const rate = Number(value);
+                menuList[index].discountRate = Number.isFinite(rate) ? Math.min(100, Math.max(0, Math.round(rate))) : 0;
+            } else if (key === 'name') {
+                menuList[index].name = value.trim() || '간식';
+            } else if (key === 'icon') {
+                menuList[index].icon = value || '🍬';
+            }
+        }
+
+        function moveMenuItem(index, dir) {
+            const newIndex = index + dir;
+            if (newIndex < 0 || newIndex >= menuList.length) return;
+            const temp = menuList[index];
+            menuList[index] = menuList[newIndex];
+            menuList[newIndex] = temp;
+            renderMenuBuffet();
+        }
+
+        function deleteMenuItem(index) {
+            selectedDiscountItems.delete(menuList[index]);
+            menuList.splice(index, 1);
+            renderMenuBuffet();
+        }
+
+        function addNewMenu() {
+            menuList.push({
+                name: "새 간식",
+                price: 1,
+                icon: "🍪",
+                enabled: true
+            });
+            renderMenuBuffet();
+        }
+
+        async function saveMenuAndSync() {
+            const saved = await pushDataToGoogleDrive();
+            if (saved) showToast('💾 메뉴·할인 및 노출 순서가 Google Drive에 저장되었습니다.');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.add('hidden');
+        }
+
+        /* --- Dashboard Analytics Visualizations (Chart.js) --- */
+        function updateDashboardCharts() {
+            let totalSpent = 0;
+            let totalCount = 0;
+            const snackCounts = {};
+            const activeSet = new Set();
+
+            ledgerHistory.forEach(r => {
+                if (r.type === '구매') {
+                    totalSpent += r.price;
+                    totalCount++;
+                    snackCounts[r.item] = (snackCounts[r.item] || 0) + 1;
+                    if (r.studentName) activeSet.add(r.studentName);
+                }
+            });
+
+            document.getElementById('dashTotalSpent').innerText = totalSpent;
+            document.getElementById('dashTotalCount').innerText = totalCount;
+            document.getElementById('dashActiveStudents').innerText = activeSet.size;
+
+            let topSnack = "-";
+            let maxCount = 0;
+            Object.keys(snackCounts).forEach(item => {
+                if (snackCounts[item] > maxCount) {
+                    maxCount = snackCounts[item];
+                    topSnack = `${item} (${maxCount}건)`;
+                }
+            });
+            document.getElementById('dashTopSnack').innerText = topSnack;
+
+            // Chart 1: Top Snacks Bar Chart
+            const sortedSnacks = Object.keys(snackCounts).sort((a, b) => snackCounts[b] - snackCounts[a]).slice(0, 5);
+            const snackLabels = sortedSnacks.length ? sortedSnacks : ['데이터 없음'];
+            const snackData = sortedSnacks.length ? sortedSnacks.map(k => snackCounts[k]) : [0];
+
+            const ctx1 = document.getElementById('chartTopSnacks').getContext('2d');
+            if (chartTopSnacksInstance) chartTopSnacksInstance.destroy();
+            chartTopSnacksInstance = new Chart(ctx1, {
+                type: 'bar',
+                data: {
+                    labels: snackLabels,
+                    datasets: [{
+                        label: '판매 수량',
+                        data: snackData,
+                        backgroundColor: '#F59E0B',
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, ticks: { stepSize: 1 } }
+                    }
+                }
+            });
+
+            // Chart 2: Cookie Usage Doughnut Chart
+            const studentNames = students.map(s => s.name);
+            const studentSpends = students.map(s => s.spent);
+
+            const ctx2 = document.getElementById('chartSpendDist').getContext('2d');
+            if (chartSpendDistInstance) chartSpendDistInstance.destroy();
+            chartSpendDistInstance = new Chart(ctx2, {
+                type: 'doughnut',
+                data: {
+                    labels: studentNames.length ? studentNames : ['미연동'],
+                    datasets: [{
+                        data: studentSpends.some(v => v > 0) ? studentSpends : [1],
+                        backgroundColor: [
+                            '#F59E0B', '#10B981', '#3B82F6', '#EC4899', '#8B5CF6',
+                            '#F97316', '#06B6D4', '#84CC16', '#EAB308', '#6366F1'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+        }
+    </script>
+</body>
+</html>
