@@ -1023,13 +1023,23 @@
             if (newlyCreatedSettingsVerifier) {
                 settingsPasswordVerifier = newlyCreatedSettingsVerifier;
             }
-            if (newlyEncryptedApi || newlyCreatedSettingsVerifier) {
+
+            // 설정 비밀번호 안내는 검증값을 처음 만들거나 명시적으로 변경한 경우에만 표시합니다.
+            // 구매/환불 등 자동 동기화에서 API Key 암호문이 다시 생성되어도 안내 토스트를 띄우지 않습니다.
+            if (newlyCreatedSettingsVerifier) {
                 apiPasswordSavedToDrive = true;
                 apiEncryptionPasswordInMemory = password;
                 apiPasswordAreaOpen = false;
                 document.getElementById('apiEncryptionPassword').value = '';
                 updateApiSecurityUI();
                 showToast('🔐 선생님 비밀번호가 Drive에 설정되었습니다. 알바생 모드에서 설정에 들어갈 때 필요합니다.');
+            } else if (newlyEncryptedApi) {
+                apiPasswordSavedToDrive = true;
+                apiEncryptionPasswordInMemory = password;
+                apiPasswordAreaOpen = false;
+                document.getElementById('apiEncryptionPassword').value = '';
+                updateApiSecurityUI();
+                // 자동 동기화 중에는 별도 알림을 띄우지 않습니다.
             } else if (apiKey && !useEncryption) {
                 storedEncryptedApi = null;
                 apiPasswordSavedToDrive = false;
