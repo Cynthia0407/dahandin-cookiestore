@@ -107,7 +107,7 @@
                     <span id="statusDot">⚪</span> <span id="statusText">미연동</span>
                 </div>
 
-                <button onclick="switchTab('settings')" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition ml-1" title="설정">
+                <button onclick="switchTab('settings')" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition ml-1" title="설정 (알바생 모드에서는 선생님 비밀번호 필요)" aria-label="설정">
                     ⚙️
                 </button>
             </div>
@@ -360,9 +360,15 @@
                             <input type="text" id="storeNameInput" value="쿠키 상점" placeholder="쿠키 상점" class="w-full p-2 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 font-bold">
                         </div>
 
-                        <div>
+                        <div class="space-y-2">
                             <label class="block font-bold text-slate-700 mb-1">🔑 다했니 API Key</label>
-                            <input type="password" id="apiKeyInput" placeholder="API Key 입력" class="w-full p-2 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 font-mono">
+                            <input type="password" id="apiKeyInput" placeholder="API Key 입력 또는 새 API Key 입력" class="w-full p-2 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 font-mono">
+                            <div class="flex flex-wrap gap-2">
+                                <button onclick="prepareApiKeyReplacement()" class="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-3 py-2 rounded-lg text-xs font-bold">✏️ API Key 변경/재입력</button>
+                                <button onclick="validateDahandinApiKey()" class="bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 px-3 py-2 rounded-lg text-xs font-bold">🔎 API Key 연결 확인</button>
+                                <button onclick="deleteSavedApiKey()" class="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-2 rounded-lg text-xs font-bold">🗑️ 저장된 API Key 삭제</button>
+                            </div>
+                            <p class="text-[11px] text-slate-500 leading-relaxed">API Key가 잘못 저장되어도 Google 로그인과 Drive 동기화에는 영향을 주지 않습니다. 기존 키를 복호화하지 못해도 새 키로 교체하거나 Drive에서 삭제할 수 있습니다. 삭제해도 학생 명단·쿠키 잔액·메뉴·할인·판매 장부는 유지됩니다.</p>
                         </div>
 
                         <div>
@@ -619,6 +625,7 @@
         let driveFileId = null;
         let storedEncryptedApi = null;
         let isApiLocked = false;
+        let apiCipherDamaged = false;
         let apiPasswordSavedToDrive = false;
         let apiPasswordAreaOpen = true;
         // 보안을 위해 비밀번호는 메모리에서만 유지하며 localStorage/Google Drive에는 저장하지 않습니다.
@@ -767,6 +774,89 @@
             const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, decodeB64(envelope.ciphertext));
             return new TextDecoder().decode(plain);
         }
+        function isValidApiEnvelope(envelope) {
+            return !!(envelope && typeof envelope === 'object' &&
+                typeof envelope.salt === 'string' && envelope.salt.length > 0 &&
+                typeof envelope.iv === 'string' && envelope.iv.length > 0 &&
+                typeof envelope.ciphertext === 'string' && envelope.ciphertext.length > 0);
+        }
+
+        function prepareApiKeyReplacement() {
+            // 기존 암호문은 그대로 두고, 새 키를 입력하면 다음 저장 때 새 암호문으로 교체합니다.
+            const input = document.getElementById('apiKeyInput');
+            input.value = '';
+            input.placeholder = '새 다했니 API Key 입력';
+            apiPasswordAreaOpen = true;
+            if (document.getElementById('encryptApiCheckbox').checked) {
+                updateApiSecurityUI();
+                if (!apiEncryptionPasswordInMemory) {
+                    document.getElementById('apiEncryptionPassword').placeholder = '새 API Key를 암호화할 비밀번호 (8자 이상)';
+                }
+            }
+            input.focus();
+            showToast('새 API Key를 입력한 뒤 연결 확인을 하고 저장하세요. 기존 키는 저장 전까지 유지됩니다.');
+        }
+
+        async function validateDahandinApiKey() {
+            const key = document.getElementById('apiKeyInput').value.trim();
+            const rawText = document.getElementById('studentCodesInput').value;
+            const codes = rawText.match(/[A-Za-z0-9]{9}/g) || [];
+            if (!key) {
+                showToast(isApiLocked
+                    ? '🔒 기존 API Key가 잠겨 있습니다. 잠금 해제하거나 새 API Key를 입력하세요.'
+                    : 'API Key를 먼저 입력하세요.');
+                return false;
+            }
+            if (!codes.length) {
+                showToast('학생 코드 9자리를 먼저 입력해야 API Key 연결을 확인할 수 있습니다.');
+                return false;
+            }
+            showToast('🔎 다했니 API Key 연결을 확인하고 있습니다...');
+            try {
+                const res = await fetch(`https://api.dahandin.com/openapi/v1/get/student/total?code=${encodeURIComponent(codes[0])}`, {
+                    headers: { "X-API-Key": key }
+                });
+                let json = {};
+                try { json = await res.json(); } catch (_) {}
+                if (res.ok && json.result && json.data) {
+                    showToast('✅ API Key가 정상적으로 작동합니다. 이제 안전하게 저장할 수 있습니다.');
+                    return true;
+                }
+                showToast(`⚠️ API Key 확인 실패 (HTTP ${res.status}). 키와 학생 코드를 확인하거나 새 키로 교체하세요.`);
+                return false;
+            } catch (e) {
+                showToast('⚠️ API 서버에 연결하지 못했습니다. 인터넷 연결 후 다시 확인하세요.');
+                return false;
+            }
+        }
+
+        async function deleteSavedApiKey() {
+            if (!isConnectedToGoogle || !driveFileId) {
+                // Drive에 아직 저장하지 않은 입력값만 지우는 경우
+                if (document.getElementById('apiKeyInput').value || storedEncryptedApi) {
+                    if (!confirm('화면에 입력된 API Key를 지울까요? Google Drive에 저장된 자료는 아직 없습니다.')) return;
+                    document.getElementById('apiKeyInput').value = '';
+                    storedEncryptedApi = null;
+                    isApiLocked = false;
+                    apiCipherDamaged = false;
+                    apiPasswordSavedToDrive = false;
+                    apiPasswordAreaOpen = true;
+                    updateApiSecurityUI();
+                    showToast('입력된 API Key를 지웠습니다.');
+                    return;
+                }
+                showToast('먼저 Google Drive에 연결해 주세요.');
+                return;
+            }
+            if (!storedEncryptedApi && !document.getElementById('apiKeyInput').value.trim()) {
+                showToast('삭제할 저장된 API Key가 없습니다.');
+                return;
+            }
+            if (!confirm('Google Drive에 저장된 다했니 API Key를 삭제할까요?\n\n학생 명단, 쿠키 잔액, 메뉴, 할인, 판매 장부 및 선생님 설정 비밀번호는 유지됩니다.')) return;
+            const saved = await pushDataToGoogleDrive({removeApiKey:true});
+            if (saved) showToast('🗑️ 저장된 API Key만 삭제했습니다. 다른 상점 데이터와 선생님 설정 잠금은 유지됩니다.');
+        }
+
         async function unlockDriveApiKey() {
             const pass = document.getElementById('apiEncryptionPassword').value;
             if (!storedEncryptedApi) {
@@ -789,7 +879,7 @@
                 document.getElementById('encryptApiCheckbox').checked = true;
                 updateApiSecurityUI();
                 showToast('🔓 잠금 해제 완료! 비밀번호는 현재 화면을 사용하는 동안만 기억합니다.');
-            } catch(e) { showToast('⚠️ 비밀번호가 틀렸거나 복호화에 실패했습니다.'); }
+            } catch(e) { showToast('⚠️ API Key를 복호화하지 못했습니다. 비밀번호가 다르거나 저장된 암호문이 손상되었을 수 있습니다. Google 연결은 유지됩니다. 새 API Key로 교체하거나 저장된 API Key 삭제를 이용하세요.'); }
         }
         async function loadDriveData(askBeforeOverwrite = false) {
             if (!isConnectedToGoogle) { showToast('먼저 Google 로그인하세요.'); return; }
@@ -800,7 +890,7 @@
             const file = (fileList.files || []).find(f => f.name === DRIVE_FILE_NAME);
             driveFileId = file ? file.id : null;
             if (!driveFileId) {
-                isApiLocked = false; storedEncryptedApi = null;
+                isApiLocked = false; storedEncryptedApi = null; apiCipherDamaged = false;
                 settingsPasswordVerifier = null;
                 apiPasswordSavedToDrive = false;
                 apiPasswordAreaOpen = true;
@@ -823,8 +913,9 @@
             document.getElementById('apiKeyInput').value = '';
             storedEncryptedApi = data.apiKeyEncrypted || null;
             settingsPasswordVerifier = data.settingsPasswordVerifier || null;
+            apiCipherDamaged = !!storedEncryptedApi && !isValidApiEnvelope(storedEncryptedApi);
             isApiLocked = !!storedEncryptedApi;
-            apiPasswordSavedToDrive = !!(storedEncryptedApi || settingsPasswordVerifier);
+            apiPasswordSavedToDrive = !!storedEncryptedApi;
             apiPasswordAreaOpen = !apiPasswordSavedToDrive;
             apiEncryptionPasswordInMemory = '';
             document.getElementById('apiEncryptionPassword').value = '';
@@ -833,29 +924,37 @@
                 document.getElementById('encryptApiCheckbox').checked = true;
             } else {
                 document.getElementById('apiKeyInput').value = data.apiKey || '';
-                document.getElementById('encryptApiCheckbox').checked = false;
+                // API Key가 아직 없으면 새로 입력할 때 기본적으로 암호화를 사용합니다.
+                document.getElementById('encryptApiCheckbox').checked = !data.apiKey;
             }
             updateApiSecurityUI();
             updateHeaderAndBadges(); renderGrid(); renderMenuBuffet();
             renderLedgerTable();
-            showToast(isApiLocked ? '☁️ 상점 데이터를 불러왔습니다. 암호화 비밀번호로 API Key를 잠금 해제하세요.' : '☁️ Google Drive 상점 데이터 불러오기 완료!');
+            if (apiCipherDamaged) {
+                showToast('☁️ 상점 데이터는 정상적으로 불러왔습니다. 다만 저장된 API Key 암호문 형식에 문제가 있어 새 키로 교체하거나 삭제해야 합니다. Google 로그인은 정상 연결되어 있습니다.');
+            } else {
+                showToast(isApiLocked ? '☁️ 상점 데이터를 불러왔습니다. API Key는 별도로 잠금 해제할 수 있습니다.' : '☁️ Google Drive 상점 데이터 불러오기 완료!');
+            }
         }
-        async function saveDriveData() {
+        async function saveDriveData(options = {}) {
             if (!isConnectedToGoogle || !googleAccessToken) {
                 showToast('⚠️ Google 로그인 후 저장할 수 있습니다.'); return false;
             }
-            if (isApiLocked) { showToast('🔒 암호화된 API Key를 먼저 잠금 해제하세요. 저장을 중단했습니다.'); return false; }
+            const enteredReplacementKey = document.getElementById('apiKeyInput').value.trim();
+            if (isApiLocked && !options.removeApiKey && !enteredReplacementKey) {
+                showToast('🔒 기존 API Key가 잠겨 있습니다. 잠금 해제하거나 새 API Key를 입력해 교체하세요.'); return false;
+            }
             const apiKey = document.getElementById('apiKeyInput').value.trim();
             const useEncryption = document.getElementById('encryptApiCheckbox').checked;
             const typedPassword = document.getElementById('apiEncryptionPassword').value;
             const password = typedPassword || apiEncryptionPasswordInMemory;
-            if (((apiKey && useEncryption) || !settingsPasswordVerifier || typedPassword) && password.length < 8) {
+            if (!options.removeApiKey && ((apiKey && useEncryption) || (!settingsPasswordVerifier && !storedEncryptedApi) || typedPassword) && password.length < 8) {
                 apiPasswordAreaOpen = true;
                 updateApiSecurityUI();
                 document.getElementById('apiEncryptionPassword').focus();
                 showToast('🔐 API Key 보호와 알바생 모드의 설정 잠금에 사용할 비밀번호를 8자 이상 입력하세요.'); return false;
             }
-            if (typedPassword && storedEncryptedApi && !apiKey) {
+            if (!options.removeApiKey && typedPassword && storedEncryptedApi && !apiKey) {
                 apiPasswordAreaOpen = true;
                 updateApiSecurityUI();
                 showToast('🔐 비밀번호를 변경하려면 먼저 저장된 API Key 잠금을 해제해야 합니다.'); return false;
@@ -868,22 +967,25 @@
             };
             let newlyEncryptedApi = null;
             let newlyCreatedSettingsVerifier = null;
-            if (apiKey) {
-                if (useEncryption) {
-                    newlyEncryptedApi = await encryptApiKey(apiKey, password);
-                    payload.apiKeyEncrypted = newlyEncryptedApi;
-                } else {
-                    payload.apiKey = apiKey;
+            if (!options.removeApiKey) {
+                if (apiKey) {
+                    if (useEncryption) {
+                        newlyEncryptedApi = await encryptApiKey(apiKey, password);
+                        payload.apiKeyEncrypted = newlyEncryptedApi;
+                    } else {
+                        payload.apiKey = apiKey;
+                    }
+                } else if (storedEncryptedApi) {
+                    // API 입력칸이 비어 있으면 기존 암호문을 유지합니다. 삭제는 전용 버튼에서만 수행합니다.
+                    payload.apiKeyEncrypted = storedEncryptedApi;
                 }
-            } else if (storedEncryptedApi && !isApiLocked) {
-                // API Key 입력칸이 비어 있어도 기존 암호화 키를 실수로 삭제하지 않습니다.
-                payload.apiKeyEncrypted = storedEncryptedApi;
             }
 
-            if (!settingsPasswordVerifier || typedPassword) {
+            if (!options.removeApiKey && (!settingsPasswordVerifier || typedPassword)) {
                 newlyCreatedSettingsVerifier = await encryptApiKey(SETTINGS_PASSWORD_MARKER, password);
                 payload.settingsPasswordVerifier = newlyCreatedSettingsVerifier;
-            } else {
+            } else if (settingsPasswordVerifier) {
+                // API Key 삭제와 무관하게 선생님 전용 설정 비밀번호 검증값은 보존합니다.
                 payload.settingsPasswordVerifier = settingsPasswordVerifier;
             }
             const json = JSON.stringify(payload);
@@ -901,9 +1003,22 @@
                 const created = await response.json();
                 driveFileId = created.id;
             }
+            if (options.removeApiKey) {
+                storedEncryptedApi = null;
+                isApiLocked = false;
+                apiCipherDamaged = false;
+                apiPasswordSavedToDrive = false;
+                apiPasswordAreaOpen = true;
+                document.getElementById('apiKeyInput').value = '';
+                document.getElementById('encryptApiCheckbox').checked = true;
+                document.getElementById('unlockApiArea').classList.add('hidden');
+                updateApiSecurityUI();
+                return true;
+            }
             if (newlyEncryptedApi) {
                 storedEncryptedApi = newlyEncryptedApi;
                 isApiLocked = false;
+                apiCipherDamaged = false;
             }
             if (newlyCreatedSettingsVerifier) {
                 settingsPasswordVerifier = newlyCreatedSettingsVerifier;
@@ -931,15 +1046,15 @@
             return true;
         }
         // Sequential uploads avoid overlapping writes within one browser tab.
-        function pushDataToGoogleDrive() {
-            const task = driveSyncQueue.catch(() => {}).then(() => saveDriveData());
+        function pushDataToGoogleDrive(options = {}) {
+            const task = driveSyncQueue.catch(() => {}).then(() => saveDriveData(options));
             driveSyncQueue = task;
             return task.catch(err => { console.error('Drive sync error:',err); showToast('⚠️ Drive 저장 실패: ' + err.message); return false; });
         }
         function handleLogout() {
             if (window.google?.accounts?.oauth2 && googleAccessToken) google.accounts.oauth2.revoke(googleAccessToken, () => {});
             googleAccessToken = null; googleTokenClient = null; driveFileId = null;
-            storedEncryptedApi = null; isApiLocked = false;
+            storedEncryptedApi = null; isApiLocked = false; apiCipherDamaged = false;
             settingsPasswordVerifier = null;
             apiPasswordSavedToDrive = false;
             apiPasswordAreaOpen = true;
@@ -1099,7 +1214,7 @@
                 await pushDataToGoogleDrive();
                 showToast(`🎉 ${students.length}명의 학생 데이터를 성공적으로 연동했습니다!`);
             } else {
-                showToast("조회 실패! API 키 및 학생 코드를 확인하세요.");
+                showToast("⚠️ 다했니 API 조회 실패! API Key 또는 학생 코드를 확인하세요. 이는 Google 로그인/Drive 연결 오류와 별개입니다. API Key를 변경하거나 삭제할 수 있습니다.");
             }
         }
 
@@ -1429,12 +1544,23 @@
 
                 apiEncryptionPasswordInMemory = pass;
                 if (storedEncryptedApi) {
-                    const api = await decryptApiKey(storedEncryptedApi, pass);
-                    document.getElementById('apiKeyInput').value = api;
-                    isApiLocked = false;
-                    apiPasswordSavedToDrive = true;
-                    apiPasswordAreaOpen = false;
-                    updateApiSecurityUI();
+                    try {
+                        const api = await decryptApiKey(storedEncryptedApi, pass);
+                        document.getElementById('apiKeyInput').value = api;
+                        isApiLocked = false;
+                        apiCipherDamaged = false;
+                        apiPasswordSavedToDrive = true;
+                        apiPasswordAreaOpen = false;
+                        updateApiSecurityUI();
+                    } catch (apiError) {
+                        // 설정 비밀번호가 맞으면 설정 진입은 허용합니다. API 암호문 오류가 관리자 설정을 막지 않습니다.
+                        document.getElementById('apiKeyInput').value = '';
+                        isApiLocked = true;
+                        apiPasswordSavedToDrive = true;
+                        apiPasswordAreaOpen = true;
+                        updateApiSecurityUI();
+                        showToast('⚠️ 선생님 확인은 완료됐지만 기존 API Key를 복호화하지 못했습니다. 새 키로 교체하거나 삭제할 수 있습니다.');
+                    }
                 }
                 document.getElementById('settingsPasswordModal').classList.add('hidden');
                 input.value = '';
@@ -1476,6 +1602,12 @@
                 if (!allowed) return;
             }
             currentRole = role;
+            // 알바생 모드에서는 상단 오른쪽 설정/로그인 메뉴를 숨깁니다.
+            // 왼쪽 상점 제목 옆 톱니바퀴는 유지하며, 기존 비밀번호 확인 절차를 거칩니다.
+            const topSettingsButton = document.getElementById('tabBtn-settings');
+            if (topSettingsButton) {
+                topSettingsButton.classList.toggle('hidden', role === 'student');
+            }
             if (role === 'teacher') {
                 currentWorkerName = "선생님";
                 document.getElementById('roleBadge').innerText = "👩‍🏫 선생님";
